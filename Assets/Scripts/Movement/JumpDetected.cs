@@ -3,32 +3,60 @@ using UnityEngine;
 
 public class JumpDetected : MonoBehaviour
 {
+    [Header("Planet")]
+    public Transform planet;
+
     [Header("Ground Detection")]
     public bool isgrounded;
-    public float distance = 0.2f;
+    public float radius = 0.3f;
+    public float groundDistance = 1.1f;
     public LayerMask layerMask;
-    public Vector3 offset = new Vector3(0f, -0.9f, 0f);
-    public float radius = 0.25f;
 
-    [Header("Jump height")]
+    [Header("Jump")]
     public float jumpForce = 7f;
 
-    InputSystem_Actions inputActions;
-    Rigidbody rb;
+    private InputSystem_Actions inputActions;
+    private Rigidbody rb;
+
+    private Vector3 gravityDirection;
+    private Vector3 groundPosition;
 
     private void Awake()
     {
-        inputActions = new InputSystem_Actions();
         rb = GetComponent<Rigidbody>();
+
+        inputActions = new InputSystem_Actions();
+        inputActions.Enable();
     }
 
     private void Update()
     {
+        if (planet == null)
+            return;
+
         if (inputActions.Player.Jump.WasPressedThisFrame() && isgrounded)
         {
-            rb.linearVelocity = new Vector3(rb.linearVelocity.x, 0f, rb.linearVelocity.z);
+            // Direccion opuesta a la gravedad.
+            Vector3 jumpDirection = (
+                transform.position - planet.position
+            ).normalized;
 
-            rb.AddForce(Vector3.up * jumpForce, ForceMode.Impulse);
+            // Eliminar velocidad hacia el suelo.
+            float velocityAlongJump = Vector3.Dot(
+                rb.linearVelocity,
+                jumpDirection
+            );
+
+            if (velocityAlongJump < 0f)
+            {
+                rb.linearVelocity -= jumpDirection * velocityAlongJump;
+            }
+
+            // Saltar.
+            rb.AddForce(
+                jumpDirection * jumpForce,
+                ForceMode.Impulse
+            );
 
             isgrounded = false;
         }
@@ -36,17 +64,46 @@ public class JumpDetected : MonoBehaviour
 
     private void FixedUpdate()
     {
-        Vector3 checkPosition = transform.position + offset;
+        if (planet == null)
+            return;
 
-        isgrounded = Physics.CheckSphere(checkPosition, radius, layerMask, QueryTriggerInteraction.Ignore);
+        // Direccion desde el centro hacia el jugador.
+        gravityDirection = (
+            transform.position - planet.position
+        ).normalized;
+
+        // Posicion debajo de los pies.
+        groundPosition = transform.position -
+                         gravityDirection * groundDistance;
+
+        // Comprobar si hay suelo.
+        isgrounded = Physics.CheckSphere(
+            groundPosition,
+            radius,
+            layerMask,
+            QueryTriggerInteraction.Ignore
+        );
     }
 
     private void OnDrawGizmosSelected()
     {
-        Vector3 checkPosition = transform.position + offset;
+        if (planet == null)
+            return;
+
+        Vector3 direction = (
+            transform.position - planet.position
+        ).normalized;
+
+        Vector3 checkPosition = transform.position -
+                               direction * groundDistance;
 
         Gizmos.color = isgrounded ? Color.green : Color.red;
-
         Gizmos.DrawWireSphere(checkPosition, radius);
+    }
+
+    private void OnDestroy()
+    {
+        inputActions.Disable();
+        inputActions.Dispose();
     }
 }
