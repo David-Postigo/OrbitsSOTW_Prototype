@@ -1,56 +1,201 @@
 
 using UnityEngine;
+using UnityEngine.InputSystem;
 
-
-// en este script para el sistema de raycast y acercamiento de la camara he utlizado lo que aprendimos en clase, el sistema de pivot me lo ha explicado la ia con el lookat.
 public class CameraMovement : MonoBehaviour
 {
-    public Transform pivot;
-    public float distance = 3f;
-    public float collisionOffset = 0.05f;
-    public LayerMask obstacleMask = ~0;
+    [Header("Punto de referencia")]
+    public Transform puntoCamara;
 
-    private Vector3 hitPosition;
+    [Header("Configuracion de camara")]
+    public float separacionCamara = 3f;
+    public float margenColision = 0.05f;
+    public LayerMask capasObstaculos = ~0;
 
+    [Header("Zoom")]
+    public float sensibilidadZoom = 0.01f;
+    public float distanciaMinima = 1f;
+    public float distanciaMaxima = 8f;
 
-    //sistema de rotacion y raycast para orbitar la camara y fijarse en el pivot, con un sistema de colision para que la camara no atraviese paredes.
-    void LateUpdate()
+    [Header("Movimiento del raton")]
+    public float sensibilidadRaton = 0.15f;
+    public float anguloMinimo = -80f;
+    public float anguloMaximo = 80f;
+
+    private InputSystem_Actions acciones;
+
+    private float rotacionHorizontal;
+    private float rotacionVertical;
+
+    private float distanciaActual;
+    private Vector3 posicionCamara;
+
+    private bool cursorBloqueado = true;
+
+    void Awake()
     {
-        if (pivot == null)
-            return;
+        acciones = new InputSystem_Actions();
+        acciones.Enable();
 
-        Vector3 direction = -(pivot.rotation * Vector3.forward);
-
-        float currentDistance = distance;
-
-        RaycastHit hit;
-
-        Debug.DrawRay(pivot.position, direction * distance, Color.red);
-
-        if (Physics.Raycast(pivot.position, direction, out hit, distance, obstacleMask, QueryTriggerInteraction.Ignore))
-        {
-            currentDistance = Mathf.Max(0.1f, hit.distance - collisionOffset);
-            Debug.DrawRay(pivot.position, direction * hit.distance, Color.green);
-        }
-
-
-        hitPosition = pivot.position + direction * currentDistance;
-
-        transform.position = hitPosition;
-
-        transform.LookAt(pivot.position);
+        BloquearCursor();
     }
 
-    //Sistema de comprovacion visual para comprobar que el raycast funciona correctamente, dibujando una esfera roja en el pivot y una esfera verde en la posicion del hit. como en clase.
-    private void OnDrawGizmosSelected()
+    void Start()
     {
-        if (pivot == null)
+        if (puntoCamara == null)
+        {
+            Debug.LogError(
+                "No has asignado el punto de referencia de la camara."
+            );
+
+            enabled = false;
+            return;
+        }
+
+        Vector3 angulos = puntoCamara.eulerAngles;
+
+        rotacionHorizontal = angulos.y;
+        rotacionVertical = angulos.x;
+
+        if (rotacionVertical > 180f)
+            rotacionVertical -= 360f;
+
+        distanciaActual = Mathf.Clamp(
+            separacionCamara,
+            distanciaMinima,
+            distanciaMaxima
+        );
+    }
+
+    void Update()
+    {
+        // Alternar bloqueo del cursor con ESC.
+        if (Keyboard.current != null &&
+            Keyboard.current.escapeKey.wasPressedThisFrame)
+        {
+            if (cursorBloqueado)
+                DesbloquearCursor();
+            else
+                BloquearCursor();
+        }
+
+        // Zoom con la rueda del raton.
+        if (cursorBloqueado && Mouse.current != null)
+        {
+            float scroll = Mouse.current.scroll.ReadValue().y;
+
+            if (Mathf.Abs(scroll) > 0.01f)
+            {
+                distanciaActual -= scroll * sensibilidadZoom;
+
+                distanciaActual = Mathf.Clamp(
+                    distanciaActual,
+                    distanciaMinima,
+                    distanciaMaxima
+                );
+            }
+        }
+    }
+
+    void LateUpdate()
+    {
+        if (puntoCamara == null)
+            return;
+
+        // Solo mover la camara cuando el cursor esta bloqueado.
+        if (cursorBloqueado)
+        {
+            Vector2 movimientoRaton =
+                acciones.Player.Look.ReadValue<Vector2>();
+
+            rotacionHorizontal +=
+                movimientoRaton.x * sensibilidadRaton;
+
+            rotacionVertical -=
+                movimientoRaton.y * sensibilidadRaton;
+
+            rotacionVertical = Mathf.Clamp(
+                rotacionVertical,
+                anguloMinimo,
+                anguloMaximo
+            );
+        }
+
+        Quaternion rotacion = Quaternion.Euler(
+            rotacionVertical,
+            rotacionHorizontal,
+            0f
+        );
+
+        Vector3 direccionCamara =
+            -(rotacion * Vector3.forward);
+
+        float distanciaFinal = distanciaActual;
+
+        RaycastHit impacto;
+
+        if (Physics.Raycast(
+            puntoCamara.position,
+            direccionCamara,
+            out impacto,
+            distanciaActual,
+            capasObstaculos,
+            QueryTriggerInteraction.Ignore))
+        {
+            distanciaFinal = Mathf.Max(
+                0.1f,
+                impacto.distance - margenColision
+            );
+        }
+
+        posicionCamara = puntoCamara.position +
+                         direccionCamara * distanciaFinal;
+
+        transform.position = posicionCamara;
+        transform.LookAt(puntoCamara.position);
+    }
+
+    void BloquearCursor()
+    {
+        cursorBloqueado = true;
+
+        Cursor.lockState = CursorLockMode.Locked;
+        Cursor.visible = false;
+    }
+
+    void DesbloquearCursor()
+    {
+        cursorBloqueado = false;
+
+        Cursor.lockState = CursorLockMode.None;
+        Cursor.visible = true;
+    }
+
+    void OnDisable()
+    {
+        DesbloquearCursor();
+    }
+
+    void OnDestroy()
+    {
+        if (acciones != null)
+        {
+            acciones.Disable();
+            acciones.Dispose();
+        }
+
+        DesbloquearCursor();
+    }
+
+    void OnDrawGizmosSelected()
+    {
+        if (puntoCamara == null)
             return;
 
         Gizmos.color = Color.red;
-        Gizmos.DrawSphere(pivot.position, 0.1f);
+        Gizmos.DrawSphere(puntoCamara.position, 0.1f);
 
         Gizmos.color = Color.green;
-        Gizmos.DrawSphere(hitPosition, 0.1f);
+        Gizmos.DrawSphere(posicionCamara, 0.1f);
     }
 }

@@ -5,27 +5,30 @@ using UnityEngine.InputSystem;
 [RequireComponent(typeof(Rigidbody))]
 public class PlanetGravity : MonoBehaviour
 {
-    public Transform planet;
+    [Header("Planeta inicial")]
+    public PlanetSurface currentPlanet;
 
-    [Header("Gravedad")]
-    public float gravity = 9.81f;
+    [Header("Movimiento")]
     public float rotationSpeed = 5f;
 
-    [Header("Limites")]
-    public float gravityRadius = 100f;
-    public float maxDistance = 150f;
-
-    private InputSystem_Actions inputActions;
+    [Header("Deteccion de planetas")]
+    public float detectionRadius = 250f;
+    public float searchInterval = 0.2f;
+    public LayerMask planetLayer;
 
     private Rigidbody rb;
-    private bool invertedGravity = false;
-    private bool insideGravityRadius;
+    private InputSystem_Actions inputActions;
+    private PlayerCheckpoint playerCheckpoint;
 
-    private Vector3 gravityDirection;
+    private bool invertedGravity;
+    private bool resetting;
+    private bool waitingForDestinationGravity;
 
-    // Posicion inicial del jugador.
+    private float searchTimer;
+
     private Vector3 initialPosition;
     private Quaternion initialRotation;
+    private PlanetSurface initialPlanet;
 
     void Awake()
     {
@@ -34,30 +37,20 @@ public class PlanetGravity : MonoBehaviour
         inputActions = new InputSystem_Actions();
         inputActions.Enable();
 
-        initialPosition = transform.position;
-        initialRotation = transform.rotation;
+        playerCheckpoint = GetComponent<PlayerCheckpoint>();
+
+        initialPosition = rb.position;
+        initialRotation = rb.rotation;
+        initialPlanet = currentPlanet;
+
+        if (currentPlanet == null)
+        {
+            Debug.LogWarning("No hay planeta inicial asignado.");
+        }
     }
 
     void Update()
     {
-        if (planet == null)
-            return;
-
-        float distance = Vector3.Distance(
-            transform.position,
-            planet.position
-        );
-
-        // Reiniciar si supera la distancia maxima.
-        if (distance > maxDistance)
-        {
-            ResetPlayer();
-            return;
-        }
-
-        insideGravityRadius = distance <= gravityRadius;
-
-        // Invertir gravedad.
         if (inputActions.Player.Gravity.WasPressedThisFrame())
         {
             invertedGravity = !invertedGravity;
@@ -66,27 +59,78 @@ public class PlanetGravity : MonoBehaviour
 
     void FixedUpdate()
     {
-        if (planet == null || !insideGravityRadius)
+        if (resetting || currentPlanet == null)
             return;
 
-        gravityDirection = (
-            planet.position - transform.position
-        ).normalized;
+        float distance = Vector3.Distance(
+            rb.position,
+            currentPlanet.transform.position
+        );
 
-        if (invertedGravity)
+        // Comprobar limite del planeta actual.
+        if (distance > currentPlanet.maxDistance)
         {
-            gravityDirection = -gravityDirection;
+            ResetPlayer();
+            return;
         }
 
+        // Esperar a entrar en el radio de gravedad del destino.
+        if (waitingForDestinationGravity)
+        {
+            if (distance <= currentPlanet.gravityRadius)
+            {
+                waitingForDestinationGravity = false;
+
+                Debug.Log("Gravedad del planeta activada.");
+            }
+            else
+            {
+                return;
+            }
+        }
+
+        // Buscar otros planetas solamente cuando
+        // el jugador ya esta dentro de la gravedad actual.
+        searchTimer += Time.fixedDeltaTime;
+
+        if (searchTimer >= searchInterval)
+        {
+            searchTimer = 0f;
+            DetectPlanet();
+        }
+
+        if (currentPlanet == null)
+            return;
+
+        distance = Vector3.Distance(
+            rb.position,
+            currentPlanet.transform.position
+        );
+
+        if (distance > currentPlanet.maxDistance)
+        {
+            ResetPlayer();
+            return;
+        }
+
+        if (distance > currentPlanet.gravityRadius)
+            return;
+
+        Vector3 gravityDirection =
+            (currentPlanet.transform.position - rb.position).normalized;
+
+        if (invertedGravity)
+            gravityDirection = -gravityDirection;
+
         rb.AddForce(
-            gravityDirection * gravity,
+            gravityDirection * currentPlanet.planetGravity,
             ForceMode.Acceleration
         );
 
         Quaternion targetRotation = Quaternion.FromToRotation(
-            transform.up,
+            rb.rotation * Vector3.up,
             -gravityDirection
-        ) * transform.rotation;
+        ) * rb.rotation;
 
         rb.MoveRotation(
             Quaternion.Slerp(
@@ -97,22 +141,158 @@ public class PlanetGravity : MonoBehaviour
         );
     }
 
-    void ResetPlayer()
+    void DetectPlanet()
     {
-        // Reiniciar posicion y rotacion.
+        Collider[] colliders = Physics.OverlapSphere(
+            rb.position,
+            detectionRadius,
+            planetLayer,
+            QueryTriggerInteraction.Ignore
+        );
+
+        PlanetSurface closestPlanet = null;
+        float closestDistance = float.MaxValue;
+
+        foreach (Collider col in colliders)
+        {
+            PlanetSurface surface =
+                col.GetComponentInParent<PlanetSurface>();
+
+            if (surface == null || surface == currentPlanet)
+                continue;
+
+            float distance = Vector3.Distance(
+                rb.position,
+                surface.transform.position
+            );
+
+            if (distance <= surface.gravityRadius &&
+                distance < closestDistance)
+            {
+                closestDistance = distance;
+                closestPlanet = surface;
+            }
+        }
+
+        if (closestPlanet != null)
+        {
+            ChangePlanet(closestPlanet);
+        }
+    }
+
+    public void ChangePlanet(PlanetSurface newPlanet)
+    {
+        if (newPlanet == null)
+            return;
+
+        currentPlanet = newPlanet;
+        invertedGravity = false;
+        waitingForDestinationGravity = false;
+
+        Debug.Log("Planeta actual: " + newPlanet.name);
+    }
+
+    public void TeleportTo(
+        Transform destination,
+        PlanetSurface newPlanet)
+    {
+        if (destination == null || newPlanet == null)
+            return;
+
         rb.linearVelocity = Vector3.zero;
         rb.angularVelocity = Vector3.zero;
 
+        rb.position = destination.position;
+        rb.rotation = destination.rotation;
+
+        currentPlanet = newPlanet;
+        invertedGravity = false;
+
+        waitingForDestinationGravity = true;
+        searchTimer = 0f;
+
+        Physics.SyncTransforms();
+
+        Debug.Log("Teletransporte realizado: " + newPlanet.name);
+    }
+
+    public void TeleportToCheckpoint(
+        Vector3 position,
+        Quaternion rotation,
+        PlanetSurface newPlanet)
+    {
+        if (newPlanet == null)
+            return;
+
+        rb.linearVelocity = Vector3.zero;
+        rb.angularVelocity = Vector3.zero;
+
+        rb.position = position;
+        rb.rotation = rotation;
+
+        currentPlanet = newPlanet;
+        invertedGravity = false;
+
+        waitingForDestinationGravity = true;
+        searchTimer = 0f;
+
+        Physics.SyncTransforms();
+
+        Debug.Log("Respawn en checkpoint: " + newPlanet.name);
+    }
+
+    public void ResetPlayer()
+    {
+        if (resetting)
+            return;
+
+        resetting = true;
+
+        rb.linearVelocity = Vector3.zero;
+        rb.angularVelocity = Vector3.zero;
+
+        if (playerCheckpoint != null &&
+            playerCheckpoint.HasCheckpoint())
+        {
+            playerCheckpoint.Respawn(this);
+        }
+        else
+        {
+            ResetToInitialPosition();
+        }
+
+        invertedGravity = false;
+
+        rb.linearVelocity = Vector3.zero;
+        rb.angularVelocity = Vector3.zero;
+
+        resetting = false;
+    }
+
+    public void ResetToInitialPosition()
+    {
         rb.position = initialPosition;
         rb.rotation = initialRotation;
 
-        // Recuperar gravedad normal.
+        currentPlanet = initialPlanet;
         invertedGravity = false;
+
+        waitingForDestinationGravity = true;
+
+        rb.linearVelocity = Vector3.zero;
+        rb.angularVelocity = Vector3.zero;
+
+        searchTimer = 0f;
+
+        Physics.SyncTransforms();
     }
 
     void OnDestroy()
     {
-        inputActions.Disable();
-        inputActions.Dispose();
+        if (inputActions != null)
+        {
+            inputActions.Disable();
+            inputActions.Dispose();
+        }
     }
 }
