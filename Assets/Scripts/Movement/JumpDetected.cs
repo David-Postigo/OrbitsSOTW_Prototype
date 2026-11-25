@@ -14,6 +14,9 @@ public class JumpDetected : MonoBehaviour
 
     [Header("Jump")]
     public float jumpForce = 7f;
+    public float jumpCooldown = 1f;
+
+    private float nextJumpTime;
 
     private InputSystem_Actions inputActions;
     private Rigidbody rb;
@@ -27,6 +30,8 @@ public class JumpDetected : MonoBehaviour
 
         inputActions = new InputSystem_Actions();
         inputActions.Enable();
+
+        nextJumpTime = 0f;
     }
 
     private void Update()
@@ -34,7 +39,9 @@ public class JumpDetected : MonoBehaviour
         if (planet == null)
             return;
 
-        if (inputActions.Player.Jump.WasPressedThisFrame() && isgrounded)
+        if (inputActions.Player.Jump.WasPressedThisFrame() &&
+            isgrounded &&
+            Time.time >= nextJumpTime)
         {
             // Direccion opuesta a la gravedad.
             Vector3 jumpDirection = (
@@ -59,6 +66,9 @@ public class JumpDetected : MonoBehaviour
             );
 
             isgrounded = false;
+
+            // Activar cooldown.
+            nextJumpTime = Time.time + jumpCooldown;
         }
     }
 
@@ -103,7 +113,10 @@ public class JumpDetected : MonoBehaviour
 
     private void OnDestroy()
     {
-        inputActions.Disable();
-        inputActions.Dispose();
+        if (inputActions != null)
+        {
+            inputActions.Disable();
+            inputActions.Dispose();
+        }
     }
 }
